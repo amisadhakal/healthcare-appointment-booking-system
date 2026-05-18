@@ -196,16 +196,33 @@ function Navbar({ onOpenAuth }) {
 // ==========================================
 // 3. BOOKING FORM COMPONENT
 // ==========================================
+
+
 function BookingForm({ onOpenAuth }) {
-  const loggedInUser = JSON.parse(localStorage.getItem('user'));
+  // 1. Move loggedInUser into React component state so it updates dynamically
+  const [user, setUser] = useState(null);
   
   const [formData, setFormData] = useState({
-    patient_name: loggedInUser ? loggedInUser.name : '',
+    patient_name: '',
     doctor_name: '',
     date: ''
   });
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+
+  // 2. Sync user state with localStorage whenever the component mounts or updates
+  useEffect(() => {
+    const storedUser = localStorage.getItem('user');
+    if (storedUser) {
+      const parsedUser = JSON.parse(storedUser);
+      setUser(parsedUser);
+      // Auto-populate patient name field if they are logged in
+      setFormData(prev => ({ ...prev, patient_name: parsedUser.name || '' }));
+    } else {
+      setUser(null);
+      setFormData(prev => ({ ...prev, patient_name: '' }));
+    }
+  }, []);
 
   const handleInputChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -216,7 +233,9 @@ function BookingForm({ onOpenAuth }) {
     setMessage('');
     setError('');
 
+    // 1. FRESH LOOKUP: Pull the absolute freshest token at the exact millisecond of click
     const token = localStorage.getItem('token');
+    
     if (!token) {
       setError('Authentication required. Please sign in to your portal account to book slots.');
       if (onOpenAuth) {
@@ -226,10 +245,11 @@ function BookingForm({ onOpenAuth }) {
     }
 
     try {
-      const headers = { 'Content-Type': 'application/json' };
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
+      // 2. Build the exact header matching your flask_jwt_extended library configuration
+      const headers = { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}` 
+      };
 
       const response = await fetch('http://localhost:5000/api/appointments/book', {
         method: 'POST',
@@ -238,13 +258,16 @@ function BookingForm({ onOpenAuth }) {
       });
       
       const data = await response.json();
+      
       if (response.ok) {
-        setMessage(data.message);
-        setFormData({ 
-          patient_name: loggedInUser ? loggedInUser.name : '', 
+        setMessage(data.message || 'Consultation slot successfully requested!');
+        
+        // 3. Keep the patient name field filled for the logged-in user while wiping selections
+        setFormData(prev => ({ 
+          ...prev,
           doctor_name: '', 
           date: '' 
-        });
+        }));
       } else {
         setError(data.error || 'Something went wrong.');
       }
@@ -252,7 +275,6 @@ function BookingForm({ onOpenAuth }) {
       setError('Cannot connect to backend server right now.');
     }
   };
-
   return (
     <div className="w-full max-w-md rounded-2xl p-8 shadow-2xl" style={{ backgroundColor: '#ffffff', border: '2px solid #000000' }}>
       <div className="mb-6">
@@ -273,18 +295,21 @@ function BookingForm({ onOpenAuth }) {
             onChange={handleInputChange}
             className="w-full text-sm px-4 py-3 rounded-xl focus:outline-none disabled:opacity-70 disabled:cursor-not-allowed" 
             style={{ backgroundColor: '#f8fafc', border: '2px solid #000000', color: '#000000', fontWeight: '900' }}
-            placeholder={loggedInUser ? loggedInUser.name : "e.g. John Doe"} 
+            placeholder={user ? user.name : "e.g. John Doe"} 
             required 
-            disabled={!!loggedInUser}
+            disabled={!!user} // Locks down field editing if profile is established
           />
         </div>
 
         <div>
           <label className="block text-[11px] uppercase tracking-wider mb-1.5" style={{ color: '#000000', fontWeight: '900', display: 'block' }}>Medical Specialist</label>
           <select 
-            name="doctor_name" value={formData.doctor_name} onChange={handleInputChange}
+            name="doctor_name" 
+            value={formData.doctor_name} 
+            onChange={handleInputChange}
             className="w-full text-sm px-4 py-3 rounded-xl focus:outline-none" 
-            style={{ backgroundColor: '#ffffff', border: '2px solid #000000', color: '#000000', fontWeight: '900' }} required
+            style={{ backgroundColor: '#ffffff', border: '2px solid #000000', color: '#000000', fontWeight: '900' }} 
+            required
           >
             <option value="" style={{ color: '#000000' }}>-- Select a Practitioner --</option>
             <option value="Dr. Smith (Cardiologist)">Dr. Smith (Cardiologist)</option>
@@ -296,20 +321,25 @@ function BookingForm({ onOpenAuth }) {
         <div>
           <label className="block text-[11px] uppercase tracking-wider mb-1.5" style={{ color: '#000000', fontWeight: '900', display: 'block' }}>Preferred Date & Time</label>
           <input 
-            type="text" name="date" value={formData.date} onChange={handleInputChange}
+            type="text" 
+            name="date" 
+            value={formData.date} 
+            onChange={handleInputChange}
             className="w-full text-sm px-4 py-3 rounded-xl focus:outline-none" 
             style={{ backgroundColor: '#f8fafc', border: '2px solid #000000', color: '#000000', fontWeight: '900' }}
-            placeholder="2026-05-20 14:30" required 
+            placeholder="2026-05-20 14:30" 
+            required 
           />
         </div>
 
         <button type="submit" className="w-full mt-2 text-white text-xs uppercase tracking-widest py-3.5 px-4 rounded-xl cursor-pointer bg-black font-black">
-          {loggedInUser ? 'Request Slot' : 'Log In to Request Slot'}
+          {user ? 'Request Slot' : 'Log In to Request Slot'}
         </button>
       </form>
     </div>
   );
 }
+
 
 // ==========================================
 // 4. PORTAL / DASHBOARD PANELS COMPONENT
