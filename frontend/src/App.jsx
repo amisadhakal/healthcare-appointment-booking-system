@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 // ==========================================
 // 1. AUTH MODAL (POPUP PORTAL) COMPONENT
@@ -45,7 +45,7 @@ function AuthModal({ isOpen, onClose }) {
         localStorage.setItem('token', data.token);
         localStorage.setItem('user', JSON.stringify(data.user));
         setMessage('Login successful!');
-        setTimeout(() => { onClose(); }, 1500);
+        setTimeout(() => { onClose(); window.location.reload(); }, 1200);
       } else {
         setMessage('Registration successful! Shifting to login...');
         setTimeout(() => {
@@ -197,11 +197,9 @@ function Navbar({ onOpenAuth }) {
 // 3. BOOKING FORM COMPONENT
 // ==========================================
 function BookingForm({ onOpenAuth }) {
-  // Check if a user session exists in localStorage
   const loggedInUser = JSON.parse(localStorage.getItem('user'));
   
   const [formData, setFormData] = useState({
-    // Auto-fill the patient name if they are logged in, otherwise leave blank
     patient_name: loggedInUser ? loggedInUser.name : '',
     doctor_name: '',
     date: ''
@@ -218,16 +216,11 @@ function BookingForm({ onOpenAuth }) {
     setMessage('');
     setError('');
 
-    // 1. FRONTEND BLOCKER: Check if the token exists
     const token = localStorage.getItem('token');
     if (!token) {
       setError('Authentication required. Please sign in to your portal account to book slots.');
-      
-      // Automatically pop open the login portal to help them out after a brief delay
       if (onOpenAuth) {
-        setTimeout(() => {
-          onOpenAuth();
-        }, 1200);
+        setTimeout(() => { onOpenAuth(); }, 1200);
       }
       return;
     }
@@ -247,7 +240,6 @@ function BookingForm({ onOpenAuth }) {
       const data = await response.json();
       if (response.ok) {
         setMessage(data.message);
-        // Reset fields but keep the logged-in user's name populated
         setFormData({ 
           patient_name: loggedInUser ? loggedInUser.name : '', 
           doctor_name: '', 
@@ -283,7 +275,7 @@ function BookingForm({ onOpenAuth }) {
             style={{ backgroundColor: '#f8fafc', border: '2px solid #000000', color: '#000000', fontWeight: '900' }}
             placeholder={loggedInUser ? loggedInUser.name : "e.g. John Doe"} 
             required 
-            disabled={!!loggedInUser} // Locks the text field if they are logged in
+            disabled={!!loggedInUser}
           />
         </div>
 
@@ -320,34 +312,234 @@ function BookingForm({ onOpenAuth }) {
 }
 
 // ==========================================
-// 4. MAIN APP WRAPPER EXPORT
+// 4. PORTAL / DASHBOARD PANELS COMPONENT
+// ==========================================
+function DashboardPortal() {
+  const loggedInUser = JSON.parse(localStorage.getItem('user'));
+  const token = localStorage.getItem('token');
+  
+  const [appointments, setAppointments] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!token) {
+      setLoading(false);
+      return;
+    }
+
+    const fetchAppointments = async () => {
+      try {
+        const response = await fetch('http://localhost:5000/api/appointments/my-slots', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const data = await response.json();
+        if (response.ok) {
+          setAppointments(data);
+        } else {
+          setError(data.error || 'Failed to load dashboard data.');
+        }
+      } catch (err) {
+        setError('Could not connect to server to fetch portal records.');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchAppointments();
+  }, [token]);
+
+  const handleUpdateStatus = async (appointmentId, newStatus) => {
+    try {
+      const response = await fetch(`http://localhost:5000/api/appointments/update/${appointmentId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ status: newStatus })
+      });
+      
+      if (response.ok) {
+        setAppointments(appointments.map(app => 
+          app._id === appointmentId ? { ...app, status: newStatus } : app
+        ));
+      }
+    } catch (err) {
+      alert('Error updating consultation status.');
+    }
+  };
+
+  if (!token || !loggedInUser) {
+    return (
+      <div id="dashboard" className="w-full max-w-4xl text-center p-12 rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 mt-16">
+        <h3 className="text-sm font-black uppercase tracking-wider text-slate-700">Portal Dashboard Locked</h3>
+        <p className="text-xs font-bold text-slate-500 mt-1">Please use the profile icon in the top right to sign in to your custom clinical account profile.</p>
+      </div>
+    );
+  }
+
+  const isDoctor = loggedInUser.role === 'doctor';
+
+  return (
+    <div id="dashboard" className="w-full max-w-5xl px-4 mt-16">
+      {/* Account Control Metadata Strip */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-2 border-black bg-white p-6 rounded-2xl mb-8 shadow-xl">
+        <div>
+          <span className="text-[10px] bg-indigo-100 text-indigo-700 px-2.5 py-1 rounded-full font-black uppercase tracking-widest">
+            {isDoctor ? 'Practitioner Access Grid' : 'Patient Health Summary'}
+          </span>
+          <h2 className="text-2xl font-black text-black mt-2">Welcome back, {loggedInUser.name}</h2>
+          <p className="text-xs font-bold text-slate-500">{loggedInUser.email}</p>
+        </div>
+        <button 
+          onClick={() => {
+            localStorage.clear();
+            window.location.reload();
+          }}
+          className="mt-4 sm:mt-0 px-4 py-2 text-xs font-black uppercase tracking-widest text-red-600 border-2 border-red-600 rounded-xl hover:bg-red-50 cursor-pointer transition-colors"
+        >
+          Disconnect Portal
+        </button>
+      </div>
+
+      {/* Main Database Render Box */}
+      <div className="bg-white border-2 border-black rounded-2xl p-6 shadow-xl">
+        <h3 className="text-lg font-black uppercase tracking-tight text-black mb-4">
+          {isDoctor ? 'Your Scheduled Medical Consultations' : 'Your Booked Session Requests'}
+        </h3>
+
+        {loading && <p className="text-xs font-bold text-slate-500 animate-pulse">Synchronizing records data map...</p>}
+        {error && <p className="text-xs font-bold text-red-600">{error}</p>}
+        
+        {!loading && appointments.length === 0 && (
+          <p className="text-xs font-bold text-slate-400 py-2">No logged appointment objects discovered under this session framework.</p>
+        )}
+
+        <div className="space-y-4">
+          {appointments.map((app) => (
+            <div key={app._id} className="flex flex-col sm:flex-row justify-between items-start sm:items-center p-4 border-2 border-slate-200 hover:border-black rounded-xl transition-all bg-slate-50/50">
+              <div className="space-y-1">
+                <div className="flex items-center gap-3">
+                  <span className="font-black text-sm text-black">
+                    {isDoctor ? `Patient: ${app.patient_name}` : `Specialist: ${app.doctor_name}`}
+                  </span>
+                  <span className={`text-[9px] uppercase font-black tracking-wider px-2 py-0.5 rounded border ${
+                    app.status === 'Approved' ? 'bg-emerald-50 border-emerald-300 text-emerald-700' :
+                    app.status === 'Completed' ? 'bg-blue-50 border-blue-300 text-blue-700' :
+                    'bg-amber-50 border-amber-300 text-amber-700'
+                  }`}>
+                    {app.status || 'pending'}
+                  </span>
+                </div>
+                <p className="text-xs font-bold text-slate-600">Scheduled Target Slot: <span className="text-black font-black">{app.date}</span></p>
+              </div>
+
+              {/* Action controller block conditional on user role */}
+              {isDoctor && app.status !== 'Completed' && (
+                <div className="flex gap-2 mt-4 sm:mt-0">
+                  {app.status !== 'Approved' && (
+                    <button 
+                      onClick={() => handleUpdateStatus(app._id, 'Approved')}
+                      className="px-3 py-1.5 text-[10px] font-black uppercase tracking-wider text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 cursor-pointer transition-colors"
+                    >
+                      Accept Slot
+                    </button>
+                  )}
+                  <button 
+                    onClick={() => handleUpdateStatus(app._id, 'Completed')}
+                    className="px-3 py-1.5 text-[10px] font-black uppercase tracking-wider text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 cursor-pointer transition-colors"
+                  >
+                    Mark Done
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ==========================================
+// 5. MAIN APP WRAPPER EXPORT
+// ==========================================
+// ==========================================
+// 5. MAIN APP WRAPPER EXPORT (UPDATED)
 // ==========================================
 export default function App() {
   const [isAuthOpen, setIsAuthOpen] = useState(false);
+  // 'home' represents the main booking landing page, 'portal' is the separate page view
+  const [currentView, setCurrentView] = useState('home'); 
 
   return (
-    <div className="min-h-screen bg-white bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(99,102,241,0.05),rgba(255,255,255,0))] text-slate-900 font-sans antialiased">
-      {/* Pass the toggle trigger to Navbar */}
-      <Navbar onOpenAuth={() => setIsAuthOpen(true)} />
-
-      <main className="pt-32 pb-16 px-6 flex flex-col items-center justify-center min-h-screen">
-        <div className="text-center max-w-xl mb-12">
-          <h1 className="text-4xl sm:text-5xl font-black tracking-tight text-slate-950 mb-4">
-            Healthcare Appointment System
-          </h1>
-          <p className="text-sm sm:text-base text-slate-700 font-bold leading-relaxed">
-            Welcome to the dashboard for Healthcare Appointment System. Experience instant, seamless scheduling coordination with premium specialist networks. "Connect and book appointments for Specific Cases".
-          </p>
+    <div className="min-h-screen bg-white bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(99,102,241,0.05),rgba(255,255,255,0))] text-slate-900 font-sans antialiased flex flex-col justify-between">
+      
+      {/* Dynamic Navigation Header */}
+      <nav className="fixed top-0 left-0 w-full z-50 bg-white/70 backdrop-blur-md border-b border-slate-200/50 px-8 py-4 flex justify-between items-center">
+        <div className="flex items-center gap-2 cursor-pointer" onClick={() => setCurrentView('home')}>
+          <div className="h-3 w-3 rounded-full bg-indigo-600 animate-pulse" />
+          <span className="text-sm font-bold tracking-widest text-slate-900 uppercase">HABS // CORE</span>
         </div>
-
-        <div id="book" className="w-full flex justify-center">
-          <BookingForm />
+        
+        <div className="flex gap-6 text-xs tracking-wider uppercase text-slate-900 font-black items-center">
+          <button 
+            onClick={() => setCurrentView('home')} 
+            className={`cursor-pointer transition-colors hover:text-indigo-600 ${currentView === 'home' ? 'text-indigo-600 underline underline-offset-4 decoration-2' : 'text-slate-900'}`}
+          >
+            Book Appointment
+          </button>
+          <button 
+            onClick={() => setCurrentView('portal')} 
+            className={`cursor-pointer transition-colors hover:text-indigo-600 ${currentView === 'portal' ? 'text-indigo-600 underline underline-offset-4 decoration-2' : 'text-slate-900'}`}
+          >
+            Portal
+          </button>
+          <span className="text-slate-300 font-normal">|</span>
+          
+          <button 
+            onClick={() => setIsAuthOpen(true)}
+            aria-label="User Portal" 
+            className="p-1 rounded-full hover:bg-slate-100 text-slate-900 hover:text-indigo-600 transition-all cursor-pointer"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-5 h-5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M17.982 18.725A7.488 7.488 0 0 0 12 15.75a7.488 7.488 0 0 0-5.982 2.975m11.963 0a9 9 0 1 0-11.963 0m11.963 0A8.966 8.966 0 0 1 12 21a8.966 8.966 0 0 1-5.982-2.275M15 9.75a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+            </svg>
+          </button>
         </div>
+      </nav>
+
+      {/* Main Dynamic View Switcher */}
+      <main className="pt-32 pb-16 px-6 flex flex-col items-center justify-center flex-grow">
+        {currentView === 'home' ? (
+          /* ================= LANDING / BOOKING VIEW ================= */
+          <div className="w-full flex flex-col items-center animate-fadeIn">
+            <div className="text-center max-w-xl mb-12">
+              <h1 className="text-4xl sm:text-5xl font-black tracking-tight text-slate-950 mb-4">
+                Healthcare Appointment System
+              </h1>
+              <p className="text-sm sm:text-base text-slate-700 font-bold leading-relaxed">
+                Welcome to the dashboard for Healthcare Appointment System. Experience instant, seamless scheduling coordination with premium specialist networks. "Connect and book appointments for Specific Cases".
+              </p>
+            </div>
+
+            <div id="book" className="w-full flex justify-center">
+              <BookingForm onOpenAuth={() => setIsAuthOpen(true)} />
+            </div>
+          </div>
+        ) : (
+          /* ================= DEDICATED PORTAL VIEW ================= */
+          <div className="w-full flex justify-center animate-fadeIn">
+            <DashboardPortal />
+          </div>
+        )}
       </main>
 
-      {/* Auth Portal Element injected globally */}
+      {/* Auth Portal Modal */}
       <AuthModal isOpen={isAuthOpen} onClose={() => setIsAuthOpen(false)} />
 
+      {/* Persistent System Footer */}
       <footer className="w-full text-center py-6 text-[10px] uppercase tracking-widest text-slate-400 border-t border-slate-100">
         &copy; 2026 Healthcare Appointment Booking System. All rights reserved.
       </footer>

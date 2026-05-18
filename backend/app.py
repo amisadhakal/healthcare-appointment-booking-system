@@ -3,10 +3,11 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from pymongo import MongoClient
 from dotenv import load_dotenv
-from flask_jwt_extended import JWTManager, jwt_required
+from flask_jwt_extended import JWTManager
 
-# Import the blueprint from your new auth.py file
+# 1. Import your blueprints
 from auth import auth_bp
+from appointments import appointments_bp  # <--- Added our new blueprint import
 
 load_dotenv()
 
@@ -19,31 +20,18 @@ jwt = JWTManager(app)
 # Allow React to communicate across origins
 CORS(app, resources={r"/api/*": {"origins": "http://localhost:5173"}})
 
-# Register the Authentication Blueprint under the '/api/auth' prefix
+# 2. Register Blueprints under clean prefixes
 app.register_blueprint(auth_bp, url_prefix='/api/auth')
+app.register_blueprint(appointments_bp, url_prefix='/api/appointments')  # <--- Added route registration
 
 # Connect to MongoDB Local Server
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
 client = MongoClient(MONGO_URI)
-db = client["habs_healthcare_db"]
-appointments_collection = db["appointments"]
+db = client['habs_healthcare_db']
 
-# Keep your appointment booking route right here in app.py
-@app.route('/api/appointments/book', methods=['POST'])
-@jwt_required() # Optional: Protects the route so only logged-in users can book
-def book_appointment():
-    try:
-        data = request.json
-        if not data:
-            return jsonify({"error": "No data provided"}), 400
-        
-        result = appointments_collection.insert_one(data)
-        return jsonify({
-            "message": "Appointment booked successfully!",
-            "appointment_id": str(result.inserted_id)
-        }), 201
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+@app.route('/')
+def home():
+    return jsonify({"status": "HABS System Core Online"}), 200
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
