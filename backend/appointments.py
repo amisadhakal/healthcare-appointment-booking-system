@@ -1,17 +1,27 @@
 import os
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from pymongo import MongoClient
 from bson import ObjectId
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
 appointments_bp = Blueprint('appointments', __name__)
 
-# Connect to your local MongoDB instance
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
-client = MongoClient(MONGO_URI)
-db = client['habs_healthcare_db']
-appointments_collection = db['appointments']
-users_collection = db['users']
+# ==========================================
+# HELPER: DYNAMIC DB DATABASE ACCESS LINK
+# ==========================================
+def get_db():
+    """
+    Dynamically fetches the single unified database context pooled by app.py.
+    This guarantees that connections never lock or collide.
+    """
+    # Fallback to a local instance only if running outside a live Flask server context
+    if not current_app:
+        MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
+        return MongoClient(MONGO_URI)['habs_healthcare_db']
+    
+    # Imports the clean, established pool directly from your central app script
+    from app import db
+    return db
 
 # ==========================================
 # 1. BOOK AN APPOINTMENT (POST)
@@ -22,19 +32,23 @@ def book_appointment():
     try:
         identity = get_jwt_identity()
         data = request.get_json()
+        db_instance = get_db()
 
         if not data:
             return jsonify({"error": "No data provided in the request body."}), 400
 
         doctor_name = data.get('doctor_name')
         date = data.get('date')
-        
-        # Determine the patient name from token or request body
+        incoming_email = data.get('patient_email')
+
         user_name = None
+        user_email = None
+
         if isinstance(identity, dict):
             user_name = identity.get('name')
+            user_email = identity.get('email')
         else:
-            user_profile = users_collection.find_one({
+            user_profile = db_instance['users'].find_one({
                 "$or": [
                     {"email": identity},
                     {"_id": ObjectId(identity) if ObjectId.is_valid(identity) else None}
@@ -42,21 +56,23 @@ def book_appointment():
             })
             if user_profile:
                 user_name = user_profile.get('name')
+                user_email = user_profile.get('email')
 
-        patient_name = data.get('patient_name') or user_name or "Patient"
+        final_email = incoming_email or user_email or "unknown@healthcare.com"
+        final_patient_name = user_name or "Patient"
 
         if not doctor_name or not date:
             return jsonify({"error": "Missing specialist choice or preferred date."}), 400
 
-        # Create the appointment document
         new_appointment = {
-            "patient_name": patient_name.strip(),
-            "doctor_name": doctor_name.strip(),
-            "date": date.strip(),
+            "patient_name": str(final_patient_name).strip(),
+            "patient_email": str(final_email).strip().lower(),
+            "doctor_name": str(doctor_name).strip(),
+            "date": str(date).strip(),
             "status": "pending"
         }
 
-        appointments_collection.insert_one(new_appointment)
+        db_instance['appointments'].insert_one(new_appointment)
         return jsonify({"message": "Consultation slot successfully requested!"}), 201
 
     except Exception as e:
@@ -65,22 +81,25 @@ def book_appointment():
 
 
 # ==========================================
-# 2. FETCH APPOINTMENTS BASED ON USER ROLE (GET)
+# 2. FETCH APPOINTMENTS VIA IDENTIFIER MATRIX (GET)
 # ==========================================
 @appointments_bp.route('/my-slots', methods=['GET'])
 @jwt_required()
 def get_my_appointments():
     try:
         identity = get_jwt_identity()
+        db_instance = get_db()
         
         user_role = None
         user_name = None
+        user_email = None
 
         if isinstance(identity, dict):
             user_role = identity.get('role')
             user_name = identity.get('name')
+            user_email = identity.get('email')
         else:
-            user_profile = users_collection.find_one({
+            user_profile = db_instance['users'].find_one({
                 "$or": [
                     {"email": identity},
                     {"_id": ObjectId(identity) if ObjectId.is_valid(identity) else None}
@@ -89,18 +108,19 @@ def get_my_appointments():
             if user_profile:
                 user_role = user_profile.get('role')
                 user_name = user_profile.get('name')
+                user_email = user_profile.get('email')
 
-        if not user_name or not user_role:
-            return jsonify({"error": "Invalid token signature context mapping."}), 401
+        if not user_email and isinstance(identity, str) and "@" in identity:
+            user_email = identity
 
         query = {}
         
-        if user_role == 'doctor':
-            query = {"doctor_name": {"$regex": user_name, "$options": "i"}}
+        if str(user_role).lower() == 'doctor':
+            query = {"doctor_name": {"$regex": user_name or "", "$options": "i"}}
         else:
-            query = {"patient_name": {"$regex": f"^{user_name}$", "$options": "i"}}
+            query = {"patient_email": str(user_email or "").strip().lower()}
 
-        appointments = list(appointments_collection.find(query).sort("_id", -1))
+        appointments = list(db_instance['appointments'].find(query).sort("_id", -1))
 
         for app in appointments:
             app['_id'] = str(app['_id'])
@@ -120,10 +140,12 @@ def get_my_appointments():
 def update_appointment_status(appointment_id):
     try:
         identity = get_jwt_identity()
+        db_instance = get_db()
+        
         user_role = identity.get('role') if isinstance(identity, dict) else None
 
         if not user_role:
-            user_profile = users_collection.find_one({
+            user_profile = db_instance['users'].find_one({
                 "$or": [
                     {"email": identity},
                     {"_id": ObjectId(identity) if ObjectId.is_valid(identity) else None}
@@ -132,7 +154,7 @@ def update_appointment_status(appointment_id):
             if user_profile:
                 user_role = user_profile.get('role')
 
-        if user_role != 'doctor':
+        if str(user_role).lower() != 'doctor':
             return jsonify({"error": "Unauthorized Access. Patient accounts cannot modify clinical grids."}), 403
 
         data = request.get_json()
@@ -144,7 +166,7 @@ def update_appointment_status(appointment_id):
         if not new_status:
             return jsonify({"error": "Missing new status property."}), 400
 
-        result = appointments_collection.update_one(
+        result = db_instance['appointments'].update_one(
             {"_id": ObjectId(appointment_id)},
             {"$set": {"status": new_status}}
         )

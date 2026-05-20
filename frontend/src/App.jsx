@@ -28,7 +28,8 @@ function AuthModal({ isOpen, onClose }) {
       : formData;
 
     try {
-      const response = await fetch(`http://localhost:5000${endpoint}`, {
+      // FIXED: Switched from localhost to 127.0.0.1 to pass your strict backend CORS rules!
+      const response = await fetch(`http://127.0.0.1:5000${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -41,7 +42,7 @@ function AuthModal({ isOpen, onClose }) {
       }
 
       if (isLogin) {
-        // Save token and user details to localStorage
+        // Save token and user details to localStorage cleanly
         localStorage.setItem('token', data.token);
         localStorage.setItem('user', JSON.stringify(data.user));
         setMessage('Login successful!');
@@ -87,9 +88,14 @@ function AuthModal({ isOpen, onClose }) {
         <form onSubmit={handleSubmit} className="space-y-4">
           {!isLogin && (
             <div>
-              <label className="block text-[11px] font-black uppercase tracking-wider mb-1.5 text-black">Full Name</label>
+              <label htmlFor="modal_name" className="block text-[11px] font-black uppercase tracking-wider mb-1.5 text-black">Full Name</label>
               <input 
-                type="text" name="name" required value={formData.name} onChange={handleChange}
+                type="text" 
+                id="modal_name"
+                name="name" 
+                required 
+                value={formData.name} 
+                onChange={handleChange}
                 className="w-full text-sm px-4 py-3 rounded-xl focus:outline-none"
                 style={{ backgroundColor: '#f8fafc', border: '2px solid #000000', color: '#000000', fontWeight: '900' }}
                 placeholder="Amisa Dhakal"
@@ -98,9 +104,14 @@ function AuthModal({ isOpen, onClose }) {
           )}
 
           <div>
-            <label className="block text-[11px] font-black uppercase tracking-wider mb-1.5 text-black">Email Address</label>
+            <label htmlFor="modal_email" className="block text-[11px] font-black uppercase tracking-wider mb-1.5 text-black">Email Address</label>
             <input 
-              type="email" name="email" required value={formData.email} onChange={handleChange}
+              type="email" 
+              id="modal_email"
+              name="email" 
+              required 
+              value={formData.email} 
+              onChange={handleChange}
               className="w-full text-sm px-4 py-3 rounded-xl focus:outline-none"
               style={{ backgroundColor: '#f8fafc', border: '2px solid #000000', color: '#000000', fontWeight: '900' }}
               placeholder="example@healthcare.com"
@@ -108,9 +119,14 @@ function AuthModal({ isOpen, onClose }) {
           </div>
 
           <div>
-            <label className="block text-[11px] font-black uppercase tracking-wider mb-1.5 text-black">Password</label>
+            <label htmlFor="modal_password" className="block text-[11px] font-black uppercase tracking-wider mb-1.5 text-black">Password</label>
             <input 
-              type="password" name="password" required value={formData.password} onChange={handleChange}
+              type="password" 
+              id="modal_password"
+              name="password" 
+              required 
+              value={formData.password} 
+              onChange={handleChange}
               className="w-full text-sm px-4 py-3 rounded-xl focus:outline-none"
               style={{ backgroundColor: '#f8fafc', border: '2px solid #000000', color: '#000000', fontWeight: '900' }}
               placeholder="••••••••"
@@ -119,9 +135,12 @@ function AuthModal({ isOpen, onClose }) {
 
           {!isLogin && (
             <div>
-              <label className="block text-[11px] font-black uppercase tracking-wider mb-1.5 text-black">User Account Type</label>
+              <label htmlFor="modal_role" className="block text-[11px] font-black uppercase tracking-wider mb-1.5 text-black">User Account Type</label>
               <select 
-                name="role" value={formData.role} onChange={handleChange}
+                id="modal_role"
+                name="role" 
+                value={formData.role} 
+                onChange={handleChange}
                 className="w-full text-sm px-4 py-3 rounded-xl focus:outline-none cursor-pointer" 
                 style={{ backgroundColor: '#ffffff', border: '2px solid #000000', color: '#000000', fontWeight: '900' }}
               >
@@ -199,28 +218,36 @@ function Navbar({ onOpenAuth }) {
 
 
 function BookingForm({ onOpenAuth }) {
-  // 1. Move loggedInUser into React component state so it updates dynamically
+  // 1. Core user state tracking from the login session frame
   const [user, setUser] = useState(null);
   
+  // 2. Updated state structure to track email and password credentials
   const [formData, setFormData] = useState({
-    patient_name: '',
+    patient_email: '',
+    password: '',
     doctor_name: '',
     date: ''
   });
+  
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
-  // 2. Sync user state with localStorage whenever the component mounts or updates
+  // 3. Sync profile states on initial runtime mount
   useEffect(() => {
     const storedUser = localStorage.getItem('user');
     if (storedUser) {
       const parsedUser = JSON.parse(storedUser);
       setUser(parsedUser);
-      // Auto-populate patient name field if they are logged in
-      setFormData(prev => ({ ...prev, patient_name: parsedUser.name || '' }));
+      
+      // Auto-populate the email field if they already logged into the platform portal
+      setFormData(prev => ({ 
+        ...prev, 
+        patient_email: parsedUser.email || '',
+        password: '••••••••' // Placeholder visual masking for pre-authenticated states
+      }));
     } else {
       setUser(null);
-      setFormData(prev => ({ ...prev, patient_name: '' }));
+      setFormData(prev => ({ ...prev, patient_email: '', password: '' }));
     }
   }, []);
 
@@ -233,48 +260,71 @@ function BookingForm({ onOpenAuth }) {
     setMessage('');
     setError('');
 
-    // 1. FRESH LOOKUP: Pull the absolute freshest token at the exact millisecond of click
-    const token = localStorage.getItem('token');
+    let token = localStorage.getItem('token');
     
+    // IF NO TOKEN: Automatically log them in using the custom form fields
     if (!token) {
-      setError('Authentication required. Please sign in to your portal account to book slots.');
-      if (onOpenAuth) {
-        setTimeout(() => { onOpenAuth(); }, 1200);
+      try {
+        const loginResponse = await fetch('http://localhost:5000/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: formData.patient_email, password: formData.password }),
+        });
+        const loginData = await loginResponse.json();
+        
+        if (!loginResponse.ok) {
+          throw new Error(loginData.error || 'Login failed before booking.');
+        }
+        
+        // Save the freshly generated token
+        token = loginData.token;
+        localStorage.setItem('token', loginData.token);
+        localStorage.setItem('user', JSON.stringify(loginData.user));
+      } catch (err) {
+        setError(err.message);
+        return;
       }
-      return;
     }
 
-    try {
-      // 2. Build the exact header matching your flask_jwt_extended library configuration
-      const headers = { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}` 
-      };
+    // NOW WE HAVE A TOKEN! Proceed with booking safely:
+    console.log("--- BOOKING REQUEST DEBUGGER ---");
+    console.log("Token value:", token ? `${token.substring(0, 15)}...` : "MISSING/NULL");
+    console.log("Payload data object:", {
+      patient_email: formData.patient_email,
+      doctor_name: formData.doctor_name,
+      date: formData.date
+    });
+    console.log("--------------------------------");
 
-      const response = await fetch('http://localhost:5000/api/appointments/book', {
+    try {
+      const response = await fetch('http://127.0.0.1:5000/api/appointments/book', {
         method: 'POST',
-        headers: headers,
-        body: JSON.stringify(formData)
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}` 
+        },
+        body: JSON.stringify({
+          patient_email: formData.patient_email, 
+          doctor_name: formData.doctor_name,     
+          date: formData.date                    
+        })
       });
       
       const data = await response.json();
       
       if (response.ok) {
         setMessage(data.message || 'Consultation slot successfully requested!');
-        
-        // 3. Keep the patient name field filled for the logged-in user while wiping selections
-        setFormData(prev => ({ 
-          ...prev,
-          doctor_name: '', 
-          date: '' 
-        }));
+        setFormData(prev => ({ ...prev, doctor_name: '', date: '' }));
+        setTimeout(() => { window.location.reload(); }, 1000); 
       } else {
-        setError(data.error || 'Something went wrong.');
+        console.error("Backend Error Response Details:", data);
+        setError(data.error || data.msg || 'Validation failed on server.');
       }
     } catch (err) {
       setError('Cannot connect to backend server right now.');
     }
-  };
+  }; // <--- THIS WAS THE BRACKET MISSING IN YOUR PREVIOUS CODE SNIPPET!
+
   return (
     <div className="w-full max-w-md rounded-2xl p-8 shadow-2xl" style={{ backgroundColor: '#ffffff', border: '2px solid #000000' }}>
       <div className="mb-6">
@@ -286,24 +336,45 @@ function BookingForm({ onOpenAuth }) {
       {error && <div className="p-3 mb-4 text-xs font-bold text-red-600 bg-red-50 border-2 border-red-200 rounded-xl text-center">{error}</div>}
 
       <form onSubmit={handleFormSubmit} className="space-y-5">
+        {/* EMAIL TRACKING INPUT */}
         <div>
-          <label className="block text-[11px] uppercase tracking-wider mb-1.5" style={{ color: '#000000', fontWeight: '900', display: 'block' }}>Full Name</label>
+          <label htmlFor="booking_email" className="block text-[11px] uppercase tracking-wider mb-1.5" style={{ color: '#000000', fontWeight: '900', display: 'block' }}>Portal Email Address</label>
           <input 
-            type="text" 
-            name="patient_name" 
-            value={formData.patient_name} 
+            type="email" 
+            id="booking_email"
+            name="patient_email" 
+            value={formData.patient_email} 
             onChange={handleInputChange}
             className="w-full text-sm px-4 py-3 rounded-xl focus:outline-none disabled:opacity-70 disabled:cursor-not-allowed" 
             style={{ backgroundColor: '#f8fafc', border: '2px solid #000000', color: '#000000', fontWeight: '900' }}
-            placeholder={user ? user.name : "e.g. John Doe"} 
+            placeholder="e.g. patient@gmail.com"
             required 
-            disabled={!!user} // Locks down field editing if profile is established
+            disabled={!!user} 
           />
         </div>
 
+        {/* PASSWORD VALIDATION INPUT */}
         <div>
-          <label className="block text-[11px] uppercase tracking-wider mb-1.5" style={{ color: '#000000', fontWeight: '900', display: 'block' }}>Medical Specialist</label>
+          <label htmlFor="booking_password" className="block text-[11px] uppercase tracking-wider mb-1.5" style={{ color: '#000000', fontWeight: '900', display: 'block' }}>Account Password</label>
+          <input 
+            type="password" 
+            id="booking_password"
+            name="password" 
+            value={formData.password} 
+            onChange={handleInputChange}
+            className="w-full text-sm px-4 py-3 rounded-xl focus:outline-none disabled:opacity-70 disabled:cursor-not-allowed" 
+            style={{ backgroundColor: '#f8fafc', border: '2px solid #000000', color: '#000000', fontWeight: '900' }}
+            placeholder="••••••••"
+            required 
+            disabled={!!user} 
+          />
+        </div>
+
+        {/* MEDICAL SPECIALIST SELECT */}
+        <div>
+          <label htmlFor="booking_specialist" className="block text-[11px] uppercase tracking-wider mb-1.5" style={{ color: '#000000', fontWeight: '900', display: 'block' }}>Medical Specialist</label>
           <select 
+            id="booking_specialist"
             name="doctor_name" 
             value={formData.doctor_name} 
             onChange={handleInputChange}
@@ -318,27 +389,29 @@ function BookingForm({ onOpenAuth }) {
           </select>
         </div>
 
+        {/* DATE AND TIME INPUT */}
         <div>
-          <label className="block text-[11px] uppercase tracking-wider mb-1.5" style={{ color: '#000000', fontWeight: '900', display: 'block' }}>Preferred Date & Time</label>
+          <label htmlFor="booking_date" className="block text-[11px] uppercase tracking-wider mb-1.5" style={{ color: '#000000', fontWeight: '900', display: 'block' }}>Preferred Date & Time</label>
           <input 
-            type="text" 
+            type="datetime-local" 
+            id="booking_date"
             name="date" 
             value={formData.date} 
             onChange={handleInputChange}
-            className="w-full text-sm px-4 py-3 rounded-xl focus:outline-none" 
+            className="w-full text-sm px-4 py-3 rounded-xl focus:outline-none cursor-pointer" 
             style={{ backgroundColor: '#f8fafc', border: '2px solid #000000', color: '#000000', fontWeight: '900' }}
-            placeholder="2026-05-20 14:30" 
             required 
           />
         </div>
 
         <button type="submit" className="w-full mt-2 text-white text-xs uppercase tracking-widest py-3.5 px-4 rounded-xl cursor-pointer bg-black font-black">
-          {user ? 'Request Slot' : 'Log In to Request Slot'}
+          {user ? 'Request Slot' : 'Log In & Request Slot'}
         </button>
       </form>
     </div>
   );
 }
+
 
 
 // ==========================================

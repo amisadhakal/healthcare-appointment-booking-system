@@ -1,6 +1,6 @@
 import os
 import bcrypt
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import create_access_token
 from pymongo import MongoClient
 from dotenv import load_dotenv
@@ -10,14 +10,32 @@ load_dotenv()
 # 1. Initialize the Blueprint for authentication
 auth_bp = Blueprint('auth', __name__)
 
-# 2. Connect to the same MongoDB setup
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
-client = MongoClient(MONGO_URI)
-db = client["habs_healthcare_db"]
-users_collection = db["users"]
+# ==========================================
+# HELPER: DYNAMIC DB DATABASE ACCESS LINK
+# ==========================================
+def get_db():
+    """
+    Dynamically fetches the single unified database context pooled by app.py.
+    This guarantees that connections never lock or collide across blueprints.
+    """
+    if not current_app:
+        MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
+        return MongoClient(MONGO_URI)['habs_healthcare_db']
+    
+    # Import the active pool established centrally in app.py
+    from app import db
+    return db
 
-@auth_bp.route('/register', methods=['POST'])
+
+# ==========================================
+# USER REGISTRATION ENDPOINT (POST & OPTIONS)
+# ==========================================
+@auth_bp.route('/register', methods=['POST', 'OPTIONS'])
 def register():
+    # Handle the browser preflight request instantly to avoid CORS blockades
+    if request.method == 'OPTIONS':
+        return jsonify({"status": "CORS preflight OK"}), 200
+
     try:
         data = request.json
         email = data.get('email')
@@ -28,10 +46,13 @@ def register():
         if not email or not password:
             return jsonify({"error": "Email and password are required"}), 400
 
+        db_instance = get_db()
+        users_collection = db_instance['users']
+
         if users_collection.find_one({"email": email}):
             return jsonify({"error": "User already exists"}), 400
 
-        # Securely hash the password
+        # Securely hash the password string before storing
         hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
 
         users_collection.insert_one({
@@ -45,25 +66,43 @@ def register():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@auth_bp.route('/login', methods=['POST'])
+
+# ==========================================
+# USER LOGIN ENDPOINT (POST & OPTIONS)
+# ==========================================
+@auth_bp.route('/login', methods=['POST', 'OPTIONS'])
 def login():
+    # Handle the browser preflight request instantly to avoid CORS blockades
+    if request.method == 'OPTIONS':
+        return jsonify({"status": "CORS preflight OK"}), 200
+
     try:
         data = request.json
         email = data.get('email')
         password = data.get('password')
 
+        db_instance = get_db()
+        users_collection = db_instance['users']
+
         user = users_collection.find_one({"email": email})
         
         if user and bcrypt.checkpw(password.encode('utf-8'), user['password']):
-            access_token = create_access_token(identity={"id": str(user['_id']), "role": user['role']})
+            
+            # 1. Clean frontend identity dictionary payload
+            identity_payload = {
+                "id": str(user['_id']),
+                "name": user.get('name'),
+                "email": user.get('email'),
+                "role": user.get('role', 'patient')
+            }
+            
+            # 2. FIX: Recent flask_jwt_extended versions strictly require identity to be a clean string
+            access_token = create_access_token(identity=str(user["_id"]))
+            
             return jsonify({
                 "message": "Login successful",
                 "token": access_token,
-                "user": {
-                    "name": user.get('name'),
-                    "email": user.get('email'),
-                    "role": user.get('role')
-                }
+                "user": identity_payload
             }), 200
         
         return jsonify({"error": "Invalid email or password"}), 401
