@@ -3,9 +3,10 @@ import React, { useState, useEffect } from 'react';
 // ==========================================
 // 1. AUTH MODAL (POPUP PORTAL) COMPONENT
 // ==========================================
+
 function AuthModal({ isOpen, onClose }) {
   const [isLogin, setIsLogin] = useState(true); // Toggle between Login and Register views
-  const [formData, setFormData] = useState({ name: '', email: '', password: '', role: 'patient' });
+  const [formData, setFormData] = useState({ name: '', email: '', password: '', role: 'patient', verificationKey: '' });
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
 
@@ -23,12 +24,13 @@ function AuthModal({ isOpen, onClose }) {
     setMessage('');
 
     const endpoint = isLogin ? '/api/auth/login' : '/api/auth/register';
+    
+    // Construct payload dynamically based on view state
     const payload = isLogin 
       ? { email: formData.email, password: formData.password }
       : formData;
 
     try {
-      // FIXED: Switched from localhost to 127.0.0.1 to pass your strict backend CORS rules!
       const response = await fetch(`http://127.0.0.1:5000${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -51,6 +53,8 @@ function AuthModal({ isOpen, onClose }) {
         setMessage('Registration successful! Shifting to login...');
         setTimeout(() => {
           setIsLogin(true);
+          // Reset form fields back to default baseline configurations
+          setFormData({ name: '', email: '', password: '', role: 'patient', verificationKey: '' });
           setMessage('');
         }, 2000);
       }
@@ -150,6 +154,26 @@ function AuthModal({ isOpen, onClose }) {
             </div>
           )}
 
+          {/* 💡 DOCTOR VERIFICATION CODE INPUT PANEL */}
+          {!isLogin && formData.role === 'doctor' && (
+            <div className="animate-in fade-in slide-in-from-top-2 duration-200">
+              <label htmlFor="modal_verification" className="block text-[11px] font-black uppercase tracking-wider mb-1.5 text-black">
+                Medical Practitioner Verification Key
+              </label>
+              <input 
+                type="password" 
+                id="modal_verification"
+                name="verificationKey" 
+                required 
+                value={formData.verificationKey || ''} 
+                onChange={handleChange}
+                className="w-full text-sm px-4 py-3 rounded-xl focus:outline-none"
+                style={{ backgroundColor: '#f8fafc', border: '2px solid #000000', color: '#000000', fontWeight: '900' }}
+                placeholder="Enter designated hospital access code"
+              />
+            </div>
+          )}
+
           <button type="submit" className="w-full mt-2 text-white text-xs uppercase tracking-widest py-3.5 px-4 rounded-xl cursor-pointer bg-black font-black">
             {isLogin ? 'Sign In' : 'Register Account'}
           </button>
@@ -170,6 +194,8 @@ function AuthModal({ isOpen, onClose }) {
     </div>
   );
 }
+
+
 
 // ==========================================
 // 2. NAVBAR COMPONENT

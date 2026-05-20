@@ -43,6 +43,15 @@ def register():
         name = data.get('name')
         role = data.get('role', 'patient')
 
+        # 💡 NEW LOCK: Intercept doctor registration and validate against the .env file
+        if role == 'doctor':
+            provided_key = data.get('verificationKey')
+            # This scans your new .env file for DOCTOR_SECRET_KEY
+            secret_system_key = os.getenv("DOCTOR_SECRET_KEY", "HABS-DOC-2026")
+            
+            if not provided_key or provided_key != secret_system_key:
+                return jsonify({"error": "Unauthorized: Invalid Medical Practitioner Verification Key."}), 401
+
         if not email or not password:
             return jsonify({"error": "Email and password are required"}), 400
 
